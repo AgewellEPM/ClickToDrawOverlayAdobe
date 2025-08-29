@@ -161,6 +161,64 @@ class CutImage {
     }
 }
 
+// Draggable image piece class
+class ImagePiece: NSView {
+    var image: NSImage
+    var isDragging = false
+    var dragOffset = NSPoint.zero
+    var originalImage: NSImage?
+    var pieceIndex: Int = 0
+    
+    init(image: NSImage, frame: NSRect) {
+        self.image = image
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.contents = image
+        layer?.contentsGravity = .resizeAspectFill
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.5).cgColor
+        layer?.cornerRadius = 4
+        layer?.shadowOpacity = 0.3
+        layer?.shadowRadius = 4
+        layer?.shadowOffset = NSSize(width: 0, height: -2)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        isDragging = true
+        let locationInSelf = convert(event.locationInWindow, from: nil)
+        dragOffset = NSPoint(x: locationInSelf.x, y: locationInSelf.y)
+        
+        // Bring to front
+        superview?.addSubview(self, positioned: .above, relativeTo: nil)
+        
+        // Add highlight
+        layer?.borderColor = NSColor.systemBlue.cgColor
+        layer?.borderWidth = 2
+        layer?.shadowOpacity = 0.5
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging, let superview = superview else { return }
+        
+        let locationInSuperview = superview.convert(event.locationInWindow, from: nil)
+        frame.origin = NSPoint(
+            x: locationInSuperview.x - dragOffset.x,
+            y: locationInSuperview.y - dragOffset.y
+        )
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        isDragging = false
+        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.5).cgColor
+        layer?.borderWidth = 1
+        layer?.shadowOpacity = 0.3
+    }
+}
+
 class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
     var toolPanel: NSPanel?
     var overlayWindow: NSWindow?
@@ -177,6 +235,7 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
     var cutImages: [CutImage] = []
     var selectedCutImage: CutImage?
     var drawingLayers: [CAShapeLayer] = []
+    var imagePieces: [ImagePiece] = []  // Store image pieces
     var currentPath: NSBezierPath?
     var undoStack: [DrawingAction] = []
     var redoStack: [DrawingAction] = []
@@ -333,9 +392,25 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
         startButton.toolTip = "Toggle Drawing Mode"
         contentView.addSubview(startButton)
         
+        // Open Image button for slicing
+        let openImageButton = NSButton(frame: NSRect(x: 5, y: 75, width: 70, height: 30))
+        openImageButton.title = "SLICE"
+        openImageButton.target = self
+        openImageButton.action = #selector(openImageForSlicing)
+        openImageButton.wantsLayer = true
+        openImageButton.isBordered = false
+        openImageButton.layer?.backgroundColor = NSColor(calibratedRed: 0.5, green: 0.2, blue: 0.8, alpha: 1.0).cgColor
+        openImageButton.layer?.borderWidth = 1
+        openImageButton.layer?.borderColor = NSColor(calibratedRed: 0.7, green: 0.4, blue: 1.0, alpha: 1.0).cgColor
+        openImageButton.layer?.cornerRadius = 4
+        openImageButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        openImageButton.contentTintColor = NSColor.white
+        openImageButton.toolTip = "Open Image for Slicing"
+        contentView.addSubview(openImageButton)
+        
         // 2. Two boxes above the start button - Grid and Artboard
         // Grid control box
-        let gridButton = NSButton(frame: NSRect(x: 5, y: 40, width: 35, height: 30))
+        let gridButton = NSButton(frame: NSRect(x: 5, y: 110, width: 35, height: 30))
         gridButton.title = ""
         gridButton.target = self
         gridButton.action = #selector(toggleGrid)
@@ -781,6 +856,112 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
         currentZoomLevel = max(currentZoomLevel / 1.2, 0.25)
         print("Zoom out: \(currentZoomLevel)")
         // Future implementation: apply zoom to canvas
+    }
+    
+    @objc func openImageForSlicing() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Choose an image to slice"
+        openPanel.showsResizeIndicator = true
+        openPanel.showsHiddenFiles = false
+        openPanel.canChooseDirectories = false
+        openPanel.canCreateDirectories = false
+        openPanel.allowsMultipleSelection = false
+        openPanel.allowedContentTypes = [.image]
+        
+        openPanel.begin { [weak self] response in
+            guard response == .OK,
+                  let url = openPanel.url,
+                  let image = NSImage(contentsOf: url),
+                  let self = self else { return }
+            
+            self.sliceImage(image)
+        }
+    }
+    
+    private func sliceImage(_ image: NSImage) {
+        guard let drawingView = self.drawingView else { return }
+        
+        // Clear existing image pieces
+        imagePieces.forEach { $0.removeFromSuperview() }
+        imagePieces.removeAll()
+        
+        // Determine slice configuration (4x4 grid by default)
+        let rows = 4
+        let cols = 4
+        
+        // Get image dimensions
+        let imageSize = image.size
+        let pieceWidth = imageSize.width / CGFloat(cols)
+        let pieceHeight = imageSize.height / CGFloat(rows)
+        
+        // Calculate starting position (center the pieces on screen)
+        let totalWidth = min(imageSize.width, drawingView.bounds.width * 0.8)
+        let totalHeight = min(imageSize.height, drawingView.bounds.height * 0.8)
+        let scale = min(totalWidth / imageSize.width, totalHeight / imageSize.height)
+        let scaledPieceWidth = pieceWidth * scale
+        let scaledPieceHeight = pieceHeight * scale
+        
+        let startX = (drawingView.bounds.width - (scaledPieceWidth * CGFloat(cols))) / 2
+        let startY = (drawingView.bounds.height - (scaledPieceHeight * CGFloat(rows))) / 2
+        
+        // Create pieces
+        for row in 0..<rows {
+            for col in 0..<cols {
+                // Create cropped image for this piece
+                let sourceRect = NSRect(
+                    x: CGFloat(col) * pieceWidth,
+                    y: CGFloat(row) * pieceHeight,
+                    width: pieceWidth,
+                    height: pieceHeight
+                )
+                
+                guard let pieceImage = createCroppedImage(from: image, rect: sourceRect) else { continue }
+                
+                // Calculate position with small random offset for visual effect
+                let randomOffsetX = CGFloat.random(in: -10...10)
+                let randomOffsetY = CGFloat.random(in: -10...10)
+                
+                let frame = NSRect(
+                    x: startX + (CGFloat(col) * scaledPieceWidth) + randomOffsetX,
+                    y: startY + (CGFloat(rows - 1 - row) * scaledPieceHeight) + randomOffsetY,
+                    width: scaledPieceWidth,
+                    height: scaledPieceHeight
+                )
+                
+                let piece = ImagePiece(image: pieceImage, frame: frame)
+                piece.pieceIndex = row * cols + col
+                piece.originalImage = image
+                
+                drawingView.addSubview(piece)
+                imagePieces.append(piece)
+            }
+        }
+        
+        // Animate pieces appearing
+        imagePieces.forEach { piece in
+            piece.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.3
+                piece.animator().alphaValue = 1.0
+            }
+        }
+    }
+    
+    private func createCroppedImage(from image: NSImage, rect: NSRect) -> NSImage? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        
+        let scale = CGFloat(cgImage.width) / image.size.width
+        let scaledRect = NSRect(
+            x: rect.origin.x * scale,
+            y: rect.origin.y * scale,
+            width: rect.size.width * scale,
+            height: rect.size.height * scale
+        )
+        
+        guard let croppedCGImage = cgImage.cropping(to: scaledRect) else { return nil }
+        
+        let croppedImage = NSImage(cgImage: croppedCGImage, size: rect.size)
+        return croppedImage
     }
     
     private func createGridOverlay() {
