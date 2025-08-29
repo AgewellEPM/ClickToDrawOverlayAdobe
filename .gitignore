@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Compiled binary
+ClickToDrawOverlayAdobe
+!ClickToDrawOverlayAdobe.swift
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# Build artifacts
+build/
+*.app/
+*.dSYM/
+
+# Temporary files
+*.swp
+*.swo
+*~
+.*.swp
