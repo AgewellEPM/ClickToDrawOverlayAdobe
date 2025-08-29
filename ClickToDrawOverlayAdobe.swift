@@ -860,7 +860,7 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
     
     @objc func openImageForSlicing() {
         let openPanel = NSOpenPanel()
-        openPanel.title = "Choose an image to slice"
+        openPanel.title = "Choose an image to cut"
         openPanel.showsResizeIndicator = true
         openPanel.showsHiddenFiles = false
         openPanel.canChooseDirectories = false
@@ -874,75 +874,225 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
                   let image = NSImage(contentsOf: url),
                   let self = self else { return }
             
-            self.sliceImage(image)
+            self.startKnifeCutMode(with: image)
         }
     }
     
-    private func sliceImage(_ image: NSImage) {
+    private var cutImage: NSImage?
+    private var cutImageView: NSImageView?
+    var cutPath: NSBezierPath = NSBezierPath()
+    private var cutPathLayer: CAShapeLayer?
+    var isKnifeCutting = false
+    var cutStartPoint: NSPoint?
+    
+    private func startKnifeCutMode(with image: NSImage) {
         guard let drawingView = self.drawingView else { return }
         
-        // Clear existing image pieces
+        // Clear existing pieces
         imagePieces.forEach { $0.removeFromSuperview() }
         imagePieces.removeAll()
         
-        // Determine slice configuration (4x4 grid by default)
-        let rows = 4
-        let cols = 4
+        // Store the image for cutting
+        cutImage = image
         
-        // Get image dimensions
+        // Create image view to display the image
         let imageSize = image.size
-        let pieceWidth = imageSize.width / CGFloat(cols)
-        let pieceHeight = imageSize.height / CGFloat(rows)
+        let viewBounds = drawingView.bounds
+        let scale = min(viewBounds.width * 0.8 / imageSize.width, 
+                       viewBounds.height * 0.8 / imageSize.height)
         
-        // Calculate starting position (center the pieces on screen)
-        let totalWidth = min(imageSize.width, drawingView.bounds.width * 0.8)
-        let totalHeight = min(imageSize.height, drawingView.bounds.height * 0.8)
-        let scale = min(totalWidth / imageSize.width, totalHeight / imageSize.height)
-        let scaledPieceWidth = pieceWidth * scale
-        let scaledPieceHeight = pieceHeight * scale
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+        let x = (viewBounds.width - scaledWidth) / 2
+        let y = (viewBounds.height - scaledHeight) / 2
         
-        let startX = (drawingView.bounds.width - (scaledPieceWidth * CGFloat(cols))) / 2
-        let startY = (drawingView.bounds.height - (scaledPieceHeight * CGFloat(rows))) / 2
+        cutImageView = NSImageView(frame: NSRect(x: x, y: y, width: scaledWidth, height: scaledHeight))
+        cutImageView?.image = image
+        cutImageView?.imageScaling = .scaleProportionallyUpOrDown
+        cutImageView?.wantsLayer = true
+        cutImageView?.layer?.borderWidth = 2
+        cutImageView?.layer?.borderColor = NSColor.systemYellow.cgColor
+        cutImageView?.layer?.cornerRadius = 8
         
-        // Create pieces
-        for row in 0..<rows {
-            for col in 0..<cols {
-                // Create cropped image for this piece
-                let sourceRect = NSRect(
-                    x: CGFloat(col) * pieceWidth,
-                    y: CGFloat(row) * pieceHeight,
-                    width: pieceWidth,
-                    height: pieceHeight
+        drawingView.addSubview(cutImageView!)
+        
+        // Create cut path layer
+        cutPathLayer = CAShapeLayer()
+        cutPathLayer?.fillColor = NSColor.clear.cgColor
+        cutPathLayer?.strokeColor = NSColor.systemRed.cgColor
+        cutPathLayer?.lineWidth = 3
+        cutPathLayer?.lineDashPattern = [5, 5]
+        cutPathLayer?.lineCap = .round
+        cutPathLayer?.lineJoin = .round
+        drawingView.layer?.addSublayer(cutPathLayer!)
+        
+        // Start knife cutting mode
+        isKnifeCutting = true
+        cutPath = NSBezierPath()
+        
+        // Show instructions
+        showCutInstructions()
+    }
+    
+    private func showCutInstructions() {
+        let alert = NSAlert()
+        alert.messageText = "Knife Cut Mode"
+        alert.informativeText = "Click and drag to draw a cutting line through the image. Release to cut the image along the path. Press ESC to cancel."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+    
+    func updateCutPathLayer() {
+        guard let cutPathLayer = cutPathLayer else { return }
+        
+        // Update the path visualization
+        let cgPath = cutPath.cgPath
+        cutPathLayer.path = cgPath
+        
+        // Animate the dash pattern for visual feedback
+        let dashAnimation = CABasicAnimation(keyPath: "lineDashPhase")
+        dashAnimation.fromValue = 0.0
+        dashAnimation.toValue = 10.0
+        dashAnimation.duration = 0.25
+        dashAnimation.repeatCount = .infinity
+        cutPathLayer.add(dashAnimation, forKey: "dashAnimation")
+    }
+    
+    func finishKnifeCut() {
+        guard isKnifeCutting else { return }
+        
+        // Perform the actual cut
+        performKnifeCut()
+        
+        // Clean up cut visualization
+        cutPathLayer?.removeFromSuperlayer()
+        cutPathLayer = nil
+        cutPath = NSBezierPath()
+        cutStartPoint = nil
+        isKnifeCutting = false
+    }
+    
+    private func performKnifeCut() {
+        guard let image = cutImage,
+              let imageView = cutImageView,
+              !cutPath.isEmpty else { return }
+        
+        // Convert cut path to image coordinates
+        let imageFrame = imageView.frame
+        let scaleX = image.size.width / imageFrame.width
+        let scaleY = image.size.height / imageFrame.height
+        
+        // Create two pieces from the cut
+        createCutPieces(from: image, alongPath: cutPath, imageFrame: imageFrame, scaleX: scaleX, scaleY: scaleY)
+        
+        // Remove original image view
+        imageView.removeFromSuperview()
+        cutImageView = nil
+        cutImage = nil
+    }
+    
+    private func createCutPieces(from image: NSImage, alongPath path: NSBezierPath, imageFrame: NSRect, scaleX: CGFloat, scaleY: CGFloat) {
+        guard let drawingView = self.drawingView else { return }
+        
+        // For simplicity, create two halves based on the cut line
+        // In a real implementation, this would use Core Graphics masking
+        
+        // Get the bounds of the cut path
+        let pathBounds = path.bounds
+        
+        // Determine if cut is more horizontal or vertical
+        let isHorizontalCut = pathBounds.width > pathBounds.height
+        
+        if isHorizontalCut {
+            // Split horizontally
+            let midY = pathBounds.midY
+            
+            // Top piece
+            let topRect = NSRect(x: 0, y: 0, width: image.size.width, height: midY * scaleY)
+            if let topImage = createCroppedImage(from: image, rect: topRect) {
+                let topFrame = NSRect(
+                    x: imageFrame.origin.x,
+                    y: imageFrame.origin.y + imageFrame.height / 2,
+                    width: imageFrame.width,
+                    height: imageFrame.height / 2
                 )
+                let topPiece = ImagePiece(image: topImage, frame: topFrame)
+                topPiece.originalImage = image
+                drawingView.addSubview(topPiece)
+                imagePieces.append(topPiece)
                 
-                guard let pieceImage = createCroppedImage(from: image, rect: sourceRect) else { continue }
-                
-                // Calculate position with small random offset for visual effect
-                let randomOffsetX = CGFloat.random(in: -10...10)
-                let randomOffsetY = CGFloat.random(in: -10...10)
-                
-                let frame = NSRect(
-                    x: startX + (CGFloat(col) * scaledPieceWidth) + randomOffsetX,
-                    y: startY + (CGFloat(rows - 1 - row) * scaledPieceHeight) + randomOffsetY,
-                    width: scaledPieceWidth,
-                    height: scaledPieceHeight
-                )
-                
-                let piece = ImagePiece(image: pieceImage, frame: frame)
-                piece.pieceIndex = row * cols + col
-                piece.originalImage = image
-                
-                drawingView.addSubview(piece)
-                imagePieces.append(piece)
+                // Animate separation
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.5
+                    topPiece.animator().frame.origin.y += 20
+                }
             }
-        }
-        
-        // Animate pieces appearing
-        imagePieces.forEach { piece in
-            piece.alphaValue = 0
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.3
-                piece.animator().alphaValue = 1.0
+            
+            // Bottom piece
+            let bottomRect = NSRect(x: 0, y: midY * scaleY, width: image.size.width, height: image.size.height - midY * scaleY)
+            if let bottomImage = createCroppedImage(from: image, rect: bottomRect) {
+                let bottomFrame = NSRect(
+                    x: imageFrame.origin.x,
+                    y: imageFrame.origin.y,
+                    width: imageFrame.width,
+                    height: imageFrame.height / 2
+                )
+                let bottomPiece = ImagePiece(image: bottomImage, frame: bottomFrame)
+                bottomPiece.originalImage = image
+                drawingView.addSubview(bottomPiece)
+                imagePieces.append(bottomPiece)
+                
+                // Animate separation
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.5
+                    bottomPiece.animator().frame.origin.y -= 20
+                }
+            }
+        } else {
+            // Split vertically
+            let midX = pathBounds.midX
+            
+            // Left piece
+            let leftRect = NSRect(x: 0, y: 0, width: midX * scaleX, height: image.size.height)
+            if let leftImage = createCroppedImage(from: image, rect: leftRect) {
+                let leftFrame = NSRect(
+                    x: imageFrame.origin.x,
+                    y: imageFrame.origin.y,
+                    width: imageFrame.width / 2,
+                    height: imageFrame.height
+                )
+                let leftPiece = ImagePiece(image: leftImage, frame: leftFrame)
+                leftPiece.originalImage = image
+                drawingView.addSubview(leftPiece)
+                imagePieces.append(leftPiece)
+                
+                // Animate separation
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.5
+                    leftPiece.animator().frame.origin.x -= 20
+                }
+            }
+            
+            // Right piece
+            let rightRect = NSRect(x: midX * scaleX, y: 0, width: image.size.width - midX * scaleX, height: image.size.height)
+            if let rightImage = createCroppedImage(from: image, rect: rightRect) {
+                let rightFrame = NSRect(
+                    x: imageFrame.origin.x + imageFrame.width / 2,
+                    y: imageFrame.origin.y,
+                    width: imageFrame.width / 2,
+                    height: imageFrame.height
+                )
+                let rightPiece = ImagePiece(image: rightImage, frame: rightFrame)
+                rightPiece.originalImage = image
+                drawingView.addSubview(rightPiece)
+                imagePieces.append(rightPiece)
+                
+                // Animate separation
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.5
+                    rightPiece.animator().frame.origin.x += 20
+                }
             }
         }
     }
@@ -1193,6 +1343,16 @@ class DrawingView: NSView {
         let location = convert(event.locationInWindow, from: nil)
         
         guard let overlay = overlay else { return }
+        
+        // Check if we're in knife-cutting mode
+        if overlay.isKnifeCutting {
+            // Start drawing the cut path
+            overlay.cutPath = NSBezierPath()
+            overlay.cutPath.move(to: location)
+            overlay.cutStartPoint = location
+            return
+        }
+        
         guard let currentTool = overlay.currentTool else { return } // No tool selected, ignore
         
         // Check if click is near the toolbar area - if so, don't handle as drawing
@@ -1265,6 +1425,14 @@ class DrawingView: NSView {
         let location = convert(event.locationInWindow, from: nil)
         
         guard let overlay = overlay else { return }
+        
+        // Handle knife-cutting mode
+        if overlay.isKnifeCutting {
+            overlay.cutPath.line(to: location)
+            overlay.updateCutPathLayer()
+            return
+        }
+        
         guard let currentTool = overlay.currentTool else { return }
         
         // Apply grid snapping if enabled
@@ -1298,6 +1466,13 @@ class DrawingView: NSView {
     override func mouseUp(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
         guard let overlay = overlay else { return }
+        
+        // Handle knife-cutting completion
+        if overlay.isKnifeCutting {
+            overlay.finishKnifeCut()
+            return
+        }
+        
         guard let currentTool = overlay.currentTool else { return }
         
         // Apply grid snapping if enabled
