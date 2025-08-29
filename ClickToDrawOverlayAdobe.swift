@@ -3,6 +3,7 @@ import CoreGraphics
 import UniformTypeIdentifiers
 import QuartzCore
 import ScreenCaptureKit
+import UserNotifications
 
 // Extension for NSBezierPath to CGPath conversion
 extension NSBezierPath {
@@ -30,6 +31,36 @@ extension NSBezierPath {
             }
         }
         return path
+    }
+}
+
+// Modern notification helper
+class NotificationHelper {
+    static let shared = NotificationHelper()
+    
+    private init() {
+        requestNotificationPermission()
+    }
+    
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error = error {
+                print("Notification permission error: \(error)")
+            }
+        }
+    }
+    
+    func showNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error showing notification: \(error)")
+            }
+        }
     }
 }
 
@@ -649,11 +680,7 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
                 currentPath = NSBezierPath()
                 
                 // Visual feedback for deselection
-                let notification = NSUserNotification()
-                notification.title = "✨ Tool Deselected"
-                notification.informativeText = "Click on a tool to select it again"
-                notification.soundName = nil
-                NSUserNotificationCenter.default.deliver(notification)
+                NotificationHelper.shared.showNotification(title: "✨ Tool Deselected", body: "Click on a tool to select it again")
                 
                 // Reset button appearance
                 animateToolDeselection(sender)
@@ -691,11 +718,7 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
             
             // Enhanced visual feedback with modern notification
             let toolNames = ["Rectangle", "Circle", "Line", "Text", "Arrow", "Pen", "Cut"]
-            let notification = NSUserNotification()
-            notification.title = "✨ Tool Active"
-            notification.informativeText = "\(toolNames[tool.rawValue]) tool ready"
-            notification.soundName = nil // Silent notification
-            NSUserNotificationCenter.default.deliver(notification)
+            NotificationHelper.shared.showNotification(title: "✨ Tool Active", body: "\(toolNames[tool.rawValue]) tool ready")
         }
     }
     
@@ -861,7 +884,6 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
     @objc func openImageForSlicing() {
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose an image to cut"
-        openPanel.showsResizeIndicator = true
         openPanel.showsHiddenFiles = false
         openPanel.canChooseDirectories = false
         openPanel.canCreateDirectories = false
@@ -1256,10 +1278,7 @@ class ClickToDrawOverlay: NSObject, NSApplicationDelegate {
         setupToolPanel() // Refresh UI to show tool change
         
         // Show user feedback that tool was cancelled
-        let notification = NSUserNotification()
-        notification.title = "Tool Cancelled"
-        notification.informativeText = "Press ESC anytime to cancel current tool"
-        NSUserNotificationCenter.default.deliver(notification)
+        NotificationHelper.shared.showNotification(title: "Tool Cancelled", body: "Press ESC anytime to cancel current tool")
     }
     
     @objc private func toggleDrawingMode() {
@@ -1550,7 +1569,7 @@ class DrawingView: NSView {
         // Use simple screenshot method for now - can be enhanced with ScreenCaptureKit later
         guard let screen = NSScreen.main else { return nil }
         
-        let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+        let _ = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
         
         // Create a bitmap representation of the screen area
         let bitmapRep = NSBitmapImageRep(
@@ -1834,7 +1853,7 @@ class DrawingView: NSView {
     }
     
     private func createTextAt(_ location: NSPoint) {
-        guard let overlay = overlay else { return }
+        guard overlay != nil else { return }
         
         // Create a simple text input dialog
         let alert = NSAlert()
@@ -1958,10 +1977,7 @@ class DrawingView: NSView {
             try? data.write(to: url)
             
             // Show notification
-            let notification = NSUserNotification()
-            notification.title = "Drawing Saved"
-            notification.informativeText = "Saved to \(filename)"
-            NSUserNotificationCenter.default.deliver(notification)
+            NotificationHelper.shared.showNotification(title: "Drawing Saved", body: "Saved to \(filename)")
         }
     }
 }

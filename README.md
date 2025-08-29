@@ -38,13 +38,16 @@ swiftc -o ClickToDrawOverlayAdobe ClickToDrawOverlayAdobe.swift \
 5. Use ESC to cancel current drawing or Q to deselect tool
 6. Export your drawing when complete
 
-### Image Slicing Feature
+### Knife-Cut Image Slicing
 
 1. Click the "SLICE" button in the toolbar
 2. Select an image file to open
-3. The image will be automatically sliced into a 4x4 grid (16 pieces)
-4. Each piece can be dragged around the screen independently
-5. Pieces have visual feedback when being dragged (highlighted border)
+3. The image appears with a yellow border indicating cut mode
+4. Click and drag to draw a cutting line through the image (shown as a red dashed line)
+5. Release the mouse to cut the image along the drawn path
+6. The image splits into two pieces that automatically separate with animation
+7. Each piece can be dragged around the screen independently
+8. Press ESC to cancel the cutting operation
 
 ## Requirements
 
